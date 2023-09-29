@@ -1,0 +1,134 @@
+---
+title: "EDA"
+author: "Stephanie Hoglund"
+output: html_document
+date: "2023-09-29"
+---
+
+```{r setup, include=FALSE, echo=TRUE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+library(tidyverse)
+library(readr)
+library(DataExplorer)
+library(magrittr)
+library(janitor)
+library(plotly)
+
+`%!in%` <- Negate("%in%")
+```
+
+# As a chef's assistant at this cooking institution from which I got the data from, I have some background knowledge that helped shape this analysis and understand some nuances of the data.
+
+# Initial Look
+I'll start with seeing the data quality I have to scope out the data cleaning and manipulation I'll need to do. I like to use the `DataExplorer` package as a first step because of their simple functions that output nice visuals.
+```{r}
+fill_rates <- read_csv("./data/FillRateReport - 2023-06-15T205913.796.csv",
+                       guess_max = 1000) %>% 
+  clean_names(case = "none")
+
+```
+
+
+Using the visual below, it looks like I don't have too much missing data (<2%) and there's a 70-30 split between categorical and quantitative columns, respectively. 
+```{r}
+plot_intro(fill_rates)
+```
+
+Let's see what exactly is missing...
+```{r}
+plot_missing(fill_rates)
+```
+
+`Chef_Name` is missing ~23% of the time. Not too damning to remove from the dataset, so I'll keep it in for now.
+
+Because a large amount of the columns is 'discrete', this makes me think that numerical data got read in as text. Let's see the first 10 records...
+```{r}
+fill_rates %>% head(10)
+```
+
+Sure enough, `Date` has the backward slashes and the last 4 columns have their units (%,\$) typed out which automatically makes that field a character type. We'll clean that now:
+
+```{r}
+fill_rates %<>% 
+  mutate(Date = as.Date(Date, tryFormats = c("%m/%d/%Y")),
+         Fill_Rate_percent = as.numeric(gsub("%", "", Fill_Rate_percent))) %>% 
+  mutate_at(vars(Cost, Potential, Actual), ~as.numeric(gsub("[$,]", "", .)))
+
+fill_rates %>% head(10)
+```
+
+Other notes:
+
+* `SKU` seems like it could be a unique identifier for each class instance
+* `Class_Name` and `Paid_in_Full`/`Fill_Rate_percent` indicate whether a class was cancelled
+* Taking the delta between `Potential` and `Actual` tells you lost profit
+
+
+## Summary Statistics
+Now that the data has the proper types, we'll look into basic summary statistics.
+
+```{r}
+fill_rates %>% 
+  summary()
+```
+
+As a chef's assistant, I know the max number of students we can have in a class is 16. The data confirms this rule. I also know hat private events and multi-day summer camps may be included in this dataset because they cost more than a typical class, thus they would need to be removed for future demand forecasting.
+
+## Date Range
+The data spans exactly 4 years. Let's see how many classes were on the schedule during this time versus how many were actually filled.
+
+Here's a simple histogram based on the dates. As you can see, there's a dip in scheduled classes between July 2020 and January 2021 because of the COVID-19 pandemic. Many stores, including this cooking class one, were shut down so I believe scheduling was reduced. We'll also have to remove additional records between March 11, 2020, when the World Health Organization (WHO) declared the pandemic [according to the CDC](https://www.cdc.gov/museum/timeline/covid19.html), and November 24, 2021 when this store stopped reducing the class capacity, to use transactions during "regular" operations for demand forecasting. The store took safety precautions and cut class capacity in half (from 16 to 8 students) during the pandemic.
+
+
+```{r}
+fill_rates %>% 
+  plot_ly(type = "histogram",
+          x = ~Date) %>% 
+  layout(title = "Date Range")
+```
+
+I found out the last date of reduced class capacity by:
+```{r echo=TRUE}
+fill_rates %>% 
+  filter(Max_Seats == 8) %>% 
+  slice_max(Date) %>% 
+  pull(Date)
+```
+
+
+For this reason, I'll remove records in the previously-mentioned time frame (March 11, 2020 - November 24, 2021).
+```{r}
+fill_rates_nocovid <- fill_rates %>% 
+  filter(Date < "2020-03-11" |
+         Date > "2021-11-24")
+
+fill_rates_nocovid %>% 
+  plot_ly(type = "histogram",
+          x = ~Date) %>% 
+  layout(title = "Date Range (Non-COVID)")
+```
+
+```{r}
+reduced_percent <- (nrow(fill_rates_nocovid) - nrow(fill_rates))/nrow(fill_rates) * 100
+```
+
+
+Filtering out the COVID-19 records reduced our dataset by **`r abs(round(reduced_percent, 1))`%**.
+
+
+## Fill Rate
+```{r}
+fill_rates %>% 
+  plot_ly(type = "box",
+          y = ~Fill_Rate_percent)
+```
+
+
+
+
+
+
+
+
+
