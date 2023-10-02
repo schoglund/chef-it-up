@@ -25,21 +25,27 @@ I'll start with seeing the data quality I have to scope out the data cleaning an
 ```{r}
 fill_rates <- read_csv("./data/FillRateReport - 2023-06-15T205913.796.csv",
                        guess_max = 1000) %>% 
-  clean_names(case = "none")
+  clean_names(case = "none") %>% 
+  select(-c(Store_ID, Store))
 
 ```
 
 
 Using the visual below, it looks like I don't have too much missing data (<2%) and there's a 70-30 split between categorical and quantitative columns, respectively. 
+<center>
 ```{r}
 plot_intro(fill_rates)
 ```
+</center>
+<br>
 
 Let's see what exactly is missing...
+<center>
 ```{r}
 plot_missing(fill_rates)
 ```
-
+</center>
+<br><br>
 `Chef_Name` is missing ~23% of the time. Not too damning to remove from the dataset, so I'll keep it in for now.
 
 Because a large amount of the columns is 'discrete', this makes me think that numerical data got read in as text. Let's see the first 10 records...
@@ -65,7 +71,7 @@ Other notes:
 * Taking the delta between `Potential` and `Actual` tells you lost profit
 
 
-## Summary Statistics
+# Summary Statistics
 Now that the data has the proper types, we'll look into basic summary statistics.
 
 ```{r}
@@ -73,20 +79,111 @@ fill_rates %>%
   summary()
 ```
 
-As a chef's assistant, I know the max number of students we can have in a class is 16. The data confirms this rule. I also know hat private events and multi-day summer camps may be included in this dataset because they cost more than a typical class, thus they would need to be removed for future demand forecasting.
+
+As a chef's assistant, I know the max number of students we can have in a class is 16. The data confirms this rule. 
+
+## Cost
+Max Cost is the most surprising statistic to me from previous tables because $2000/person seems steep. However, I think that private events and multi-day summer camps may be included in this dataset because they cost more than a typical class. Thus, they would need to be removed for future demand forecasting as they are outside the scope of this project.
+
+```{r}
+fill_rates %>% filter(Cost > 99) %>% 
+  mutate(Class_Name_cleaned = gsub(" ?\\(.*\\)", "", Class_Name),
+         Class_Name_cleaned = gsub(": .*$", "", Class_Name_cleaned)) %>% 
+  group_by(Class_Name_cleaned) %>% 
+  summarise(n = n(),
+            Avg_Price = mean(Cost, na.rm = TRUE)) %>% 
+  arrange(desc(n))
+```
+
+After cleaning up the class name a little bit to somewhat standardize the groupings and looking at classes with a unit cost over $99 (our regular cost), we can see that a majority of these classes are private events, kids/teens camps, and special classes that come with extra goodies ("free" pans or knives). 
+
+I'm now curious to see if classes that come with goodies are filled more than the regular classes without goodies - I'll test this hypothesis at the end. I would also want to see which type of goodie entices people to take a class: do people find getting a casserole dish or a skillet worth their money? For me, I'll take the skillet because you can never have too many of those.
+
+For this project, we'll remove the private events, camps, and classes with goodies. While I'm at it, I'll also remove the classes that said "cancelled".
+```{r echo=TRUE}
+fill_rates_classes <- fill_rates %>% 
+  filter(!grepl("Private Event", Class_Name),
+         !grepl("Series", Class_Name),
+         !grepl("\\+", Class_Name),
+         !grepl("cancelled", Class_Name))
+```
+
+Let's see what the spread of prices is now...
+<center>
+```{r}
+fill_rates_classes %>% 
+  plot_ly(type = "violin",
+          y = ~Cost,
+          box = list(visible = TRUE),
+          meanline = list(visible = TRUE),
+          x0 = "Cost per Class") %>% 
+  layout(yaxis = list(title = ""))
+```
+</center>
+
+Using the boxplot, the average price of a class hovers at \$78 with the lowest class at \$47 and the highest at \$109. I think the \$47 is for the family classes and the \$109 is for the seafood classes. 
+
+Looking at the violin portion of the plot, a majority of the classes are priced at or above the mean. I wonder if this is because of inflation and prices increased over time due to rising food costs or the store felt they could increase profits this way. Either way I would want to see if fill rates still are impacted by this changing price.
+
+
+## Time of Day
+From my experience, there's a difference between morning and evening classes not only with the menu but also class capacity. The morning classes don't experience the same traffic and volume as the evening classes because many people have jobs during the day. I'll classify the classes into morning, afternoon, and evening buckets, then test the hypothesis that the average fill rate for morning classes is less than evening.
+
+```{r}
+fill_rates_classes %<>% 
+  mutate(Hour = hour(Time),
+         time_of_day = case_when(
+           Hour < 13 ~ "Morning",
+           Hour < 17 ~ "Afternoon",
+           TRUE ~ "Evening"
+         ))
+
+fill_rates_classes$time_of_day <- factor(fill_rates_classes$time_of_day)
+```
+
+Does the store offer the same number of morning, afternoon, and evening classes?
+```{r}
+fill_rates_classes %>% 
+  count(time_of_day)
+```
+
+Overall, yes, the store does seem to offer the same amount of classes throughout the day. 
+
+
+What is the spread of classes during the day? Aka how filled are classes throughout the day? Are they similar?
+<center>
+```{r}
+fig <- ggplot(fill_rates_classes,
+       aes(x = Fill_Rate_percent, 
+           fill = time_of_day)) +
+  geom_density(alpha = 0.2)
+
+ggplotly(fig) %>% 
+  layout(xaxis = list(title = "Fill Rate (%)"),
+         legend = list(title = list(text = "<b>Time of Day</b>")))
+```
+</center>
+
+The evening and afternoon classes look to be filled more often than the morning classes... but is there a significant difference? Check out the last section of this report.
+
+
 
 ## Date Range
 The data spans exactly 4 years. Let's see how many classes were on the schedule during this time versus how many were actually filled.
 
-Here's a simple histogram based on the dates. As you can see, there's a dip in scheduled classes between July 2020 and January 2021 because of the COVID-19 pandemic. Many stores, including this cooking class one, were shut down so I believe scheduling was reduced. We'll also have to remove additional records between March 11, 2020, when the World Health Organization (WHO) declared the pandemic [according to the CDC](https://www.cdc.gov/museum/timeline/covid19.html), and November 24, 2021 when this store stopped reducing the class capacity, to use transactions during "regular" operations for demand forecasting. The store took safety precautions and cut class capacity in half (from 16 to 8 students) during the pandemic.
+Here's are simple histograms based on the dates. I included all the classes and then the ones that were scheduled (after removing the "cancelled" classes from the Cost section). As you can see, there's a dip in scheduled classes between July 2020 and January 2021 because of the COVID-19 pandemic. Many stores, including this cooking class one, were shut down so I believe scheduling was reduced. We'll also have to remove additional records between March 11, 2020, when the World Health Organization (WHO) declared the pandemic [according to the CDC](https://www.cdc.gov/museum/timeline/covid19.html), and November 24, 2021 when this store stopped reducing the class capacity, to use transactions during "regular" operations for demand forecasting. The store took safety precautions and cut class capacity in half (from 16 to 8 students) during the pandemic.
 
-
+<center>
 ```{r}
-fill_rates %>% 
-  plot_ly(type = "histogram",
-          x = ~Date) %>% 
-  layout(title = "Date Range")
+plot_ly(alpha = 0.6) %>% 
+  add_histogram(x = ~fill_rates$Date,
+                name = "All Classes") %>% 
+  add_histogram(x = ~fill_rates_classes$Date,
+                name = "Scheduled Classes") %>% 
+  layout(title = "Date Range",
+         barmode = "overlay")
 ```
+</center>
 
 I found out the last date of reduced class capacity by:
 ```{r echo=TRUE}
@@ -98,21 +195,23 @@ fill_rates %>%
 
 
 For this reason, I'll remove records in the previously-mentioned time frame (March 11, 2020 - November 24, 2021).
+<center>
 ```{r}
-fill_rates_nocovid <- fill_rates %>% 
+fill_rates_nocovid <- fill_rates_classes %>% 
   filter(Date < "2020-03-11" |
          Date > "2021-11-24")
 
 fill_rates_nocovid %>% 
   plot_ly(type = "histogram",
           x = ~Date) %>% 
-  layout(title = "Date Range (Non-COVID)")
+  layout(title = "Date Range (Scheduled Non-COVID)")
 ```
+</center>
+
 
 ```{r}
 reduced_percent <- (nrow(fill_rates_nocovid) - nrow(fill_rates))/nrow(fill_rates) * 100
 ```
-
 
 Filtering out the COVID-19 records reduced our dataset by **`r abs(round(reduced_percent, 1))`%**.
 
@@ -130,5 +229,14 @@ fill_rates %>%
 
 
 
+# Other Analyses
+If I had the data, I would want to tie in retail data to see which classes bring in more revenue from the students shopping during the class. It's protocol to give the students a "break", but really we want them to shop more in the store while the kitchen assistants can catch up on cleaning.
 
+## Are special Classes with goodies filled more than classes without goodies?
+
+## Class Prices vs Fill Rates
+categorize classes into buckets and see which bracket is filled more often.
+(<70, 70-80, 90+)
+
+## Average fill rate for morning classes is less than evening
 
