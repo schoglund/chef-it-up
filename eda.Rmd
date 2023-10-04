@@ -14,6 +14,7 @@ library(DataExplorer)
 library(magrittr)
 library(janitor)
 library(plotly)
+library(reticulate)
 
 `%!in%` <- Negate("%in%")
 ```
@@ -216,12 +217,72 @@ reduced_percent <- (nrow(fill_rates_nocovid) - nrow(fill_rates))/nrow(fill_rates
 Filtering out the COVID-19 records reduced our dataset by **`r abs(round(reduced_percent, 1))`%**.
 
 
-## Fill Rate
+### Weekday vs Weekend Classes
+Fill rates may be impacted if the class is offered on a weekday or weekend because people typically work corporate jobs during the week. For this analysis, I'll classify Monday through Thursday as a "weekday" and Friday through Sunday as a "weekend" by creating a binary variable, `is_weekend`, for my future model.
+
 ```{r}
-fill_rates %>% 
-  plot_ly(type = "box",
-          y = ~Fill_Rate_percent)
+fill_rates_nocovid %<>% 
+  mutate(day_of_week = factor(wday(Date, label=TRUE)),
+         is_weekend = factor(ifelse(day_of_week %in% c('Fri', 'Sat', 'Sun'), 1, 0), labels = c("Weekday", "Weekend")))
 ```
+
+
+What is the distribution of fill rates for a weekend versus a weekday?
+<center>
+```{r}
+fill_rates_nocovid %>% 
+  plot_ly(type = "box",
+          x = ~is_weekend,
+          y = ~Fill_Rate_percent,
+          color = ~is_weekend,
+          boxmean = TRUE) %>% 
+  layout(title = "Fill Rate for Weekday vs Weekend",
+         xaxis = list(title = ""),
+         yaxis = list(title = "Fill Rate (%)"))
+```
+</center>
+
+```{r}
+fill_rates_nocovid %>% 
+  group_by(is_weekend) %>% 
+  summarise(Count = n(),
+            Min = min(Fill_Rate_percent, na.rm = TRUE),
+            Q1 = quantile(Fill_Rate_percent, 0.25, na.rm = TRUE),
+            Mean = mean(Fill_Rate_percent, na.rm = TRUE),
+            Median = median(Fill_Rate_percent, na.rm = TRUE),
+            Q3 = quantile(Fill_Rate_percent, 0.75, na.rm = TRUE),
+            Max = max(Fill_Rate_percent, na.rm = TRUE),
+            SD = sd(Fill_Rate_percent, na.rm = TRUE))
+```
+
+
+The average fill rate for the Weekend is greater than the Weekday, which was expected. 
+<br>
+What's interesting to see is that, for the Weekday, the mean is above the median - this finding suggests the data is *positively skewed* because extremely high values are pulling the mean to the right while a majority of the values hover around 43.75. For the Weekend, we see the opposite, the mean is below the median, which suggests the data is *negatively skewed* because extremely low values are pulling the mean to the left while a majority of the values hover around 78.125. 
+<br>
+It's also crazy to see Weekend Q1 at 50, which means that 25% of the Weekend classes have fill rates below half or that 75% of the time Weekend classes are at least half full.
+
+
+## Holiday Season
+Another big factor I've seen with cooking classes aside from price and time of day/week is how close we are to the holidays. The holidays are busy and people love to schedule an event when family and friends come into town, especially if it's snowing outside (I kinda stole my own thunder here, but we'll address weather in the next section - pun intended). 
+
+```{python}
+from datetime import datetime
+import pandas as pd
+from pandas.tseries.holiday import USFederalHolidayCalendar
+
+cal = USFederalHolidayCalendar()
+holidays = cal.holidays(start='2019-01-01', end='2023-12-31').to_pydatetime()
+
+def is_holiday(date):
+  return date in holidays
+
+is_holiday(datetime.strptime('2023-12-25', '%Y-%m-%d'))
+
+
+
+```
+
 
 
 
