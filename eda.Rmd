@@ -48,7 +48,7 @@ plot_missing(fill_rates)
 ```
 </center>
 <br><br>
-`Chef_Name` is missing ~23% of the time. Not too damning to remove from the dataset, so I'll keep it in for now.
+`Chef_Name` is missing ~23% of the time. Not too damning to remove from the dataset, so I'll keep it in for now. However, I noticed that pre-pandemic, the chef names are correctly assigned but post-pandemic, the chef name was either missing or filled in with the resident chef, thus hiding the true instructor's name. For this reason, I'll exclude the chef's name as a feature for the model.
 
 Because a large amount of the columns is 'discrete', this makes me think that numerical data got read in as text. Let's see the first 10 records...
 ```{r}
@@ -85,7 +85,7 @@ fill_rates %>%
 As a chef's assistant, I know the max number of students we can have in a class is 16. The data confirms this rule. 
 
 ## Cost
-Max Cost is the most surprising statistic to me from previous tables because $2000/person seems steep. However, I think that private events and multi-day summer camps may be included in this dataset because they cost more than a typical class. Thus, they would need to be removed for future demand forecasting as they are outside the scope of this project.
+Max Cost is the most surprising statistic to me from previous tables because \$2000/person seems steep. However, I think that private events and multi-day summer camps may be included in this dataset because they cost more than a typical class. Thus, they would need to be removed for future demand forecasting as they are outside the scope of this project.
 
 ```{r}
 fill_rates %>% filter(Cost > 99) %>% 
@@ -126,6 +126,25 @@ fill_rates_classes %>%
 Using the boxplot, the average price of a class hovers at \$78 with the lowest class at \$47 and the highest at \$109. I think the \$47 is for the family classes and the \$109 is for the seafood classes. 
 
 Looking at the violin portion of the plot, a majority of the classes are priced at or above the mean. I wonder if this is because of inflation and prices increased over time due to rising food costs or the store felt they could increase profits this way. Either way I would want to see if fill rates still are impacted by this changing price.
+
+```{r}
+fill_rates_classes %>% 
+  mutate(Year = year(Date),
+         Month = month(Date),
+         Month = ifelse(Month < 10, str_pad(Month, 2, "left", 0), Month),
+         Year_Month = paste(Year, Month, sep = "-")) %>% 
+  group_by(Year_Month) %>% 
+  summarise(Avg_Cost = mean(Cost, na.rm = TRUE)) %>% 
+  plot_ly(type = "scatter",
+          mode = "lines+markers",
+          x = ~Year_Month,
+          y = ~Avg_Cost) %>% 
+  layout(title = "Class Prices over Time",
+         xaxis = list(title = "Date"),
+         yaxis = list(title = "Average Cost per Class"))
+```
+
+The COVID-19 pandemic was pivotal movement, in more ways than one, but in this case with prices. Before the pandemic hit in March 2020, prices in mid-2019 were hovering just below \$65 before being raised \$10 to close the year out. Excluding the large dip in prices during the pandemic, we see that prices did not go back to pre-pandemic levels. Instead, they increased another \$10 in December 2020 and it hovers at \$77 for another year before seeing yet another price increase in Summer 2022. Not sure if the company was trying to make up for lost profits during the pandemic or if they're taking advantage of the American consumer suddenly buying after being locked down. I know this particular company had to close many of their stores around the country and my store had condensed traffic from two other stores in the area. So I think it was a combination of all these factors, wanting to make as much profit as possible, inflation, and rising food costs that led us to where we are now with an average class costing \$87.
 
 
 ## Time of Day
@@ -338,10 +357,118 @@ I'm going to pull in data from the National Oceanic and Atmospheric Administrati
 If I had the data, I would want to tie in retail data to see which classes bring in more revenue from the students shopping during the class. It's protocol to give the students a "break", but really we want them to shop more in the store while the kitchen assistants can catch up on cleaning.
 
 ## Are special Classes with goodies filled more than classes without goodies?
+Special classes that came with a "free" gift are denoted by a "+" in the class name and not followed by "More" or "Dessert". Let's use a **one-way t-test** to compare the fill rate means of two groups: classes with and without goodies. I assume the groups have unequal variances because they have different sample sizes and their boxplots show different ranges of fill rate values.
+
+* H0: there is no difference between the groups
+* Ha: classes with goodies are filled more than classes without goodies
+
+```{r}
+special_classes <- fill_rates %>% 
+  filter(grepl("\\+ \\w+", Class_Name),
+         !grepl("cancelled", Class_Name),
+         !grepl("\\+ (?=More|Dessert)", Class_Name, perl = TRUE)) %>% 
+  mutate(Group = "Special")
+
+# need to make sure we exclude the private and/or cancelled classes
+non_special_classes <- fill_rates_classes %>% 
+  mutate(Group = "Non-Special")
+
+classes <- bind_rows(special_classes, non_special_classes) %>% 
+  select(Group, Fill_Rate_percent)
+
+classes %>% 
+  plot_ly(type = "box",
+          x = ~Group,
+          y = ~Fill_Rate_percent,
+          boxmean = TRUE)
+```
+
+```{r}
+alpha <- 0.05
+
+t_test <- t.test(Fill_Rate_percent ~ Group, 
+       data = classes,
+       alternative = "less",
+       conf.level = 1-alpha)
+
+t_test
+
+if(t_test$p.value < alpha){
+  print("Reject H0")
+} else{
+  print("Fail to reject H0")
+}
+```
+
+Because the p-value is more than the alpha value of **0.05**, we *fail to reject the null hypothesis* and the test suggests that the mean fill rate for special classes is no different than that for non-special classes. However, if we set the alpha to **0.10**, we *reject the null hypothesis* and the test would suggest that the mean fill rate for special classes is greater than that for non-special classes. The alpha value is also known as the type I error rate, the probability that you reject the null hypothesis when the null hypothesis is true. However, I'll keep the significance level at 0.05 because of the different sample sizes in this test and keeping the significance level low shows strong support for the null hypothesis.
+
+
 
 ## Class Prices vs Fill Rates
-categorize classes into buckets and see which bracket is filled more often.
-(<70, 70-80, 90+)
+In the Cost section earlier, we saw how the company increased prices steadily after the pandemic. Here, we'll categorize classes into price buckets and see which bucket is filled more often. I'll use the following buckets:
+
+* Group 1: <\$70
+* Group 2: \$70-80
+* Group 3: \$80<
+
+```{r}
+class_rates <- fill_rates_nocovid %>% 
+  mutate(Price_Group = case_when(
+    Cost < 70 ~ "<$70",
+    Cost < 80 ~ "$70-80",
+    TRUE ~ "$80+"
+  )) %>% 
+  select(Price_Group, Fill_Rate_percent)
+
+
+class_rates %>% 
+  plot_ly(type = "box",
+          x = ~Price_Group,
+          y = ~Fill_Rate_percent,
+          boxmean = TRUE)
+```
+
+
+Using Analysis of Variance (ANOVA), I'll test to see which price group has a statistically significant higher mean fill rate.
+
+H0: there is no difference in mean fill rates between all 3 price groups
+Ha: at least one price group differs in mean fill rate
+
+```{r}
+price_anova <- aov(Fill_Rate_percent ~ Price_Group, class_rates)
+
+summary(price_anova)
+```
+
+Using a significance level of 0.05, we fail to reject the null hypothesis (just barely) and agree that there is no difference in mean fill rates for the price groups. Therefore, the changes in pricing are not stopping the American consumer from booking cooking classes. Our testing stops here and we don't need to continue further with Tukey's Procedure and finding which price group is statistically significant.
 
 ## Average fill rate for morning classes is less than evening
+Similar to the previous section with the price groups, we'll analyze here if the time at which the class is offered affects the class's fill rate.
+
+```{r}
+fill_rates_nocovid %>% 
+  plot_ly(type = "box",
+          x = ~time_of_day,
+          y = ~Fill_Rate_percent,
+          boxmean = TRUE)
+```
+
+Using ANOVA, let's see what the results are at an alpha level of 0.05:
+```{r}
+tod_anova <- aov(Fill_Rate_percent ~ time_of_day, fill_rates_nocovid)
+
+summary(tod_anova)
+```
+
+The ANOVA test shows that we reject the null hypothesis because there's strong evidence to support that at least one group has a different mean fill rate. Let's use Tukey's procedure to see which group(s) is/are statistically different from each other.
+
+```{r}
+TukeyHSD(tod_anova)
+```
+
+```{r}
+plot(TukeyHSD(tod_anova))
+```
+
+Using the table and plot, we see that all groups are statistically different from each other because all the p-values are less than alpha of 0.05 (so we reject evey null hypothesis of the groups being the same) and none of the confidence intervals include zero.
 
