@@ -15,6 +15,7 @@ library(magrittr)
 library(janitor)
 library(plotly)
 library(reticulate)
+use_python("/Users/stephaniehoglund/Documents/Github/chef-it-up/.venv/bin/python")
 
 `%!in%` <- Negate("%in%")
 ```
@@ -211,7 +212,7 @@ fill_rates_nocovid %>%
 
 
 ```{r}
-reduced_percent <- (nrow(fill_rates_nocovid) - nrow(fill_rates))/nrow(fill_rates) * 100
+reduced_percent <- (nrow(fill_rates_nocovid) - nrow(fill_rates_classes))/nrow(fill_rates) * 100
 ```
 
 Filtering out the COVID-19 records reduced our dataset by **`r abs(round(reduced_percent, 1))`%**.
@@ -267,24 +268,67 @@ It's also crazy to see Weekend Q1 at 50, which means that 25% of the Weekend cla
 Another big factor I've seen with cooking classes aside from price and time of day/week is how close we are to the holidays. The holidays are busy and people love to schedule an event when family and friends come into town, especially if it's snowing outside (I kinda stole my own thunder here, but we'll address weather in the next section - pun intended). 
 
 ```{python}
-from datetime import datetime
+from datetime import datetime, date
 import pandas as pd
-from pandas.tseries.holiday import USFederalHolidayCalendar
+import holidays
 
-cal = USFederalHolidayCalendar()
-holidays = cal.holidays(start='2019-01-01', end='2023-12-31').to_pydatetime()
+us_holidays = holidays.US(expand=True)
 
-def is_holiday(date):
-  return date in holidays
+fill_rates_nocovid = r.fill_rates_nocovid
 
-is_holiday(datetime.strptime('2023-12-25', '%Y-%m-%d'))
+# add column if class is on a holiday
+fill_rates_nocovid['is_holiday'] = fill_rates_nocovid['Date'].apply(lambda x: x in us_holidays)
 
+# add column for how far away a class is from a holiday (either before or after the holiday)
+fill_rates_nocovid['closest_holiday'] = fill_rates_nocovid['Date'].apply(lambda x: min(us_holidays, key=lambda y: abs(y - x)))
 
+fill_rates_nocovid['closest_holiday_name'] = fill_rates_nocovid['closest_holiday'].apply(lambda x: us_holidays.get(x))
+
+fill_rates_nocovid[['Date', 'closest_holiday']] = fill_rates_nocovid[['Date', 'closest_holiday']].apply(pd.to_datetime)
+
+fill_rates_nocovid['proximity_to_holiday'] = abs(fill_rates_nocovid['Date'] - fill_rates_nocovid['closest_holiday']).dt.days
 
 ```
 
+```{r}
+fill_rates_nocovid <- py$fill_rates_nocovid %>% 
+  mutate(closest_holiday = as.Date(closest_holiday))
 
 
+fill_rates_nocovid %>% 
+  plot_ly(type = "scatter",
+          x = ~proximity_to_holiday,
+          y = ~Fill_Rate_percent) %>% 
+  layout(title = "Fill Rates Near the Holidays",
+         xaxis = list(title ="Days to a Holiday"),
+         yaxis = list(title = "Fill Rate (%)"))
+```
+
+
+From the above plot, there doesn't seem to be a linear relationship between holiday proximity and fill rate percentage. To further confirm this conclusion with statistics, the Pearson and Spearman correlation coefficients both hover at `r round(cor(fill_rates_nocovid$Fill_Rate_percent, fill_rates_nocovid$proximity_to_holiday), 3)` and `r round(cor(fill_rates_nocovid$Fill_Rate_percent, fill_rates_nocovid$proximity_to_holiday, method = "spearman"), 3)`, respectively.
+
+
+For my curiosity, which holiday brought in more people (i.e. higher fill rates)?
+```{r}
+fill_rates_nocovid %>% 
+  mutate(closest_holiday_name = gsub(" \\(Observed\\)","", closest_holiday_name)) %>% 
+  group_by(closest_holiday_name) %>% 
+  summarise(`Num Classes Offered` = n(),
+            `Avg Fill Rate` = mean(Fill_Rate_percent, na.rm = TRUE)) %>% 
+  arrange(desc(`Avg Fill Rate`))
+```
+
+Although the most classes were offered around Washington's Birthday in mid-February, classes around New Year's were the most filled with Washington's Birthday a close second again. This finding checks out because we tried to schedule classes during school breaks when people wouldn't necessarily be traveling out of town (like for Thanksgiving or Christmas), but still wanted to do something. 
+
+
+## Weather
+The final feature I wanted to include in this analysis is weather. Weather impacts cooking classes significantly because we would always have people arrive late or cancel completely if there was significant snow or rain. The temperature also influenced fill rates because if it was too hot or too cold outside, people would rush inside for an air-conditioned activity or for the warmth of food. But if the temperature was just right, our store would be a ghost town - I called this the Goldilocks Effect.
+
+I'm going to pull in data from the National Oceanic and Atmospheric Administration (NOAA) for the region and add average temperature and whether it snowed/rained or not as new features to evaluate for my model.
+
+```{r}
+
+```
 
 
 
