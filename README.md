@@ -5,11 +5,15 @@ This project will look into cooking class fill rates from 2019-2022 to do demand
 * the **store manager** 👩‍🏫 identify which classes are popular to *attract customers and maximize profit*
 * the **scheduler** 👨‍💻 slot chefs and kitchen assistants to *provide the appropriate coverage for classes* since some chefs specialize in certain cuisines and the number of assistants needed depends on recipe complexity and class size
 
-## Project Plan
+## Project Plan - Statistical Method Approach
 ### EDA
 * summary statistics of the original data + any new features: count, mean, median, standard deviation
 * how to handle missing values
 * correlation between fields to eliminate duplicate info
+
+## Project Plan - Machine Learning Approach
+### EDA
+Same as previous section's EDA.
    
 ### Feature Engineering
 Are there any factors I can create from this data that impacts class fill rates or can tell more to the story? I've always thought of feature engineering as a way to give the model more context to the situation in a numerical way. I'll incorporate:
@@ -28,7 +32,7 @@ Are there any factors I can create from this data that impacts class fill rates 
 
 ### Run Model
 I'll take a look at 4 different types of models:
-1. Linear Regression
+1. Linear Regression - baseline
 2. (S)ARIMA: (Seasonal) Autoregressive and Moving Average
 3. LSTM: Long Short-Term Memory
 4. LightGBM

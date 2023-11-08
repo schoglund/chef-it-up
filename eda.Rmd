@@ -470,5 +470,24 @@ TukeyHSD(tod_anova)
 plot(TukeyHSD(tod_anova))
 ```
 
-Using the table and plot, we see that all groups are statistically different from each other because all the p-values are less than alpha of 0.05 (so we reject evey null hypothesis of the groups being the same) and none of the confidence intervals include zero.
+Using the table and plot, we see that all groups are statistically different from each other because all the p-values are less than alpha of 0.05 (so we reject every null hypothesis of the groups being the same) and none of the confidence intervals include zero.
+
+
+# Next Steps
+Now that I know what my data tells me, how can I use it to predict future fill rates?
+
+Using a traditional statistical or machine learning method depends on what kind of question I want to answer. 
+
+* Do I want to predict future fill rates by week since the scheduler makes the schedule a week at a time? This would involve averaging fill rates by week and I might lose the importance of the features I was trying to create in the first place (time of day, holidays)
+* Do I want to predict future fill rates for a morning, afternoon, and evening class since my EDA showed me that fill rates are statistically different by the time of day? For example, build 3 separate ARIMA models
+
+I had to remove pandemic data because it's not representative of "normal" operations. Does this mean I can't use traditional time series models or do I have to focus on pre- or post-pandemic time periods?
+
+
+```{r}
+save(fill_rates_nocovid, file = "main_df.RData")
+```
+
+
+
 
