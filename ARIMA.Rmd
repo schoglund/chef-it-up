@@ -1,0 +1,121 @@
+---
+title: "ARIMA"
+author: "Stephanie Hoglund"
+output: html_document
+date: "2023-11-08"
+---
+
+```{r setup, include=FALSE, echo=TRUE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+library(tidyverse)
+library(readr)
+library(ggplot2)
+library(magrittr)
+library(janitor)
+library(plotly)
+library(fpp3)
+library(reticulate)
+use_python("/Users/stephaniehoglund/Documents/Github/chef-it-up/.venv/bin/python")
+
+`%!in%` <- Negate("%in%")
+```
+
+# Time Series Analysis
+Goal: predict weekly fill rates by time of day ->> have 3 models, one for morning, afternoon, and evening since I think the classes are different from each other.
+
+Frequency: weekly since daily is computationally expensive and scheduling is usually done by the week
+
+# Read in Data
+```{r}
+load("main_df.RData")
+
+fill_rates_nocovid
+```
+
+Start off with morning data post-pandemic (1 Nov. 2021 and onward):
+```{r}
+morning_df <- fill_rates_nocovid %>% 
+  mutate(Date = as.Date(Date)) %>% 
+  filter(time_of_day == "Morning",
+         Date >= as.Date("2021-11-01"))
+
+# for dates where multiple morning classes occurred, take the first class because it's more of a "morning" class than the other
+morning_df %<>%
+  group_by(Date) %>% 
+  slice_head(n=1) %>% 
+  ungroup()
+
+ggplotly(ggplot(data = morning_df, aes(x = Date, y = Fill_Rate_percent)) +
+  geom_line() +
+  labs(title = "Morning Fill Rates"))
+
+# make morning_df a tsibble to work some of the other time series functions
+morning_tsbl <- as_tsibble(morning_df, index = Date, regular = FALSE)
+```
+Looking at the time series graph, I notice some windows of trending behavior
+
+## Pre-Processing
+### Stationarity
+Check for **stationarity** ->> does the data have trend or seasonality? If it does, then it is NON-stationary. A stationary time series is one where the value of the observation does not depend on the time, so it cannot have predictable behavior in the long-term. Use Augmented Dickey-Fuller or KPSS test to check or look at ACF plot (if ACF decreases slowly, then non-stationary). Make a non-stationary time series stationary by *differencing* (stabilizes mean) or applying a *transformation*. If data is strongly seasonal, then want to do *seasonal differencing* first. Don't do too many differencings because may introduce false dynamics or nonexistent autocorrelations.
+
+ADF: $H_0$ = data is non-stationary<br>
+KPSS: $H_0$ = data is stationary (prefer this one for forecasting models because we want our data to be stationary so we seek strong evidence to reject H0)
+
+```{r}
+morning_tsbl %>% 
+  ACF(Fill_Rate_percent) %>% 
+  autoplot()
+```
+
+Morning classes aren't held every day, so the time interval is irregular. In the above Autocorrelation Function (ACF) chart, it's hard to tell if there is white noise in this dataset. It actually looks a bit cyclical between lags. I'll use the KPSS test:
+
+$H_0$: data is stationary
+$H_a$: data is not stationary
+
+```{r}
+morning_tsbl %>% 
+  features(Fill_Rate_percent, unitroot_kpss)
+```
+
+The KPSS test p-value is 0.035. If we use a significance level of 0.05, then we **reject $H_0$** and the data is not stationary. In order, to make it stationary, we can do some differencing. 
+
+### First-Order Differencing
+First-order differencing just takes the difference between the current and previous value. From the time series plot, there doesn't seem to be a strong seasonal component, so I'll just so a first-order difference and do the KPSS test again:
+```{r}
+morning_tsbl %>% 
+  mutate(Fill_Rate_diff = difference(Fill_Rate_percent)) %>% 
+  features(Fill_Rate_diff, unitroot_kpss)
+```
+Again, we are testing the null hypothesis if the data is stationary. The KPSS test p-value is 0.1. Therefore, we **fail to reject $H_0$** and the data is now stationary.
+
+I can use the built-in function to also check how many differences I should take:
+```{r}
+morning_tsbl %>% 
+  features(Fill_Rate_percent, unitroot_ndiffs)
+```
+
+The built-in function can also tell us how many seasonal differences to take:
+```{r}
+morning_tsbl %>%
+  features(Fill_Rate_percent, unitroot_nsdiffs)
+```
+
+My assumption about not seeing seasonal components is correct as shown above. Seasonal differencing would've had me take the difference between the current and one-year prior values (i.e. difference in fill rate between 2023-11-08 and 2022-11-08).
+
+Now, actually transform the data frame with differencing.
+```{r}
+morning_tsbl %<>%
+  mutate(Fill_Rate_diff = difference(Fill_Rate_percent))
+```
+
+
+
+
+
+### Autocorrelation
+Check for **autocorrelation** ->> does the current observation linearly depend on past observations? Don't want this
+
+
+
+
